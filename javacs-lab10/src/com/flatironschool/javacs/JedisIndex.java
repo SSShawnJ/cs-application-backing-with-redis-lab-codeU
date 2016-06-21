@@ -1,14 +1,15 @@
 package com.flatironschool.javacs;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
 
+import org.jsoup.nodes.Element;
+import org.jsoup.nodes.Node;
+import org.jsoup.nodes.TextNode;
 import org.jsoup.select.Elements;
 
 import redis.clients.jedis.Jedis;
@@ -67,8 +68,8 @@ public class JedisIndex {
 	 * @return Set of URLs.
 	 */
 	public Set<String> getURLs(String term) {
-        // FILL THIS IN!
-		return null;
+        String urlKey=urlSetKey(term);
+        return jedis.smembers(urlKey);
 	}
 
     /**
@@ -78,8 +79,14 @@ public class JedisIndex {
 	 * @return Map from URL to count.
 	 */
 	public Map<String, Integer> getCounts(String term) {
-        // FILL THIS IN!
-		return null;
+		Map<String,Integer> URLsToCount=new HashMap<>();
+        Set<String> urls=getURLs(term);
+        for(String url:urls){
+        	int count=getCount(url,term);
+        	URLsToCount.put(url, count);
+        }
+        
+		return URLsToCount;
 	}
 
     /**
@@ -90,8 +97,8 @@ public class JedisIndex {
 	 * @return
 	 */
 	public Integer getCount(String url, String term) {
-        // FILL THIS IN!
-		return null;
+        String key=termCounterKey(url);
+        return Integer.parseInt(jedis.hget(key, term));
 	}
 
 
@@ -102,8 +109,33 @@ public class JedisIndex {
 	 * @param paragraphs  Collection of elements that should be indexed.
 	 */
 	public void indexPage(String url, Elements paragraphs) {
-        // FILL THIS IN!
+		Transaction t = jedis.multi();
+        for(Node para:paragraphs){
+        	for(Node node:new WikiNodeIterable(para)){
+    			if(node instanceof TextNode){
+    				String[] array = ((TextNode) node).text().replaceAll("\\pP", " ").toLowerCase().split("\\s+");
+    				
+    				for (int i=0; i<array.length; i++) {
+    					String term = array[i];
+    					//add to url set
+    					String urlSetKey=urlSetKey(term);
+    					t.sadd(urlSetKey, url);
+    					
+    					//increase count
+    					String termCounterKey=termCounterKey(url);
+    					t.hincrBy(termCounterKey, term, 1);
+    				}
+    				
+    			}
+    		}
+        }
+        t.exec();
 	}
+	
+	
+	
+	
+	
 
 	/**
 	 * Prints the contents of the index.
@@ -243,6 +275,7 @@ public class JedisIndex {
 	private static void loadIndex(JedisIndex index) throws IOException {
 		WikiFetcher wf = new WikiFetcher();
 
+		
 		String url = "https://en.wikipedia.org/wiki/Java_(programming_language)";
 		Elements paragraphs = wf.readWikipedia(url);
 		index.indexPage(url, paragraphs);
